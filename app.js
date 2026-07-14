@@ -6,7 +6,7 @@
   const RDP_EPS_MERGE = 1.5;  // merge 켤 때 더 강한 간결화
   const BATCH_SIZE = 20;
   const LINE_COLOR = '#2d2d2d';
-  const EDGE_THRESH = 0.4;
+  const EDGE_THRESH = 0.15;
   const MIN_CONTOUR = 10;
 
   const fileInput = document.getElementById('file-input');
@@ -559,42 +559,39 @@
       if ((i + 1) % 50 === 0 || i === total - 1) {
         setStatus(`Drawing... ${i + 1}/${total}`);
       }
-      // yield to browser for rendering, then scroll
-      if (i % 5 === 0) {
-        await new Promise(r => {
-          requestAnimationFrame(() => {
-            scrollExprListToBottom();
-            r();
-          });
+      // yield to browser for rendering, then scroll to bottom
+      await new Promise(r => {
+        requestAnimationFrame(() => {
+          scrollExprListToBottom();
+          r();
         });
-      }
+      });
     }
     
     setStatus(`Done! ${total} curves`);
   }
 
   function scrollExprListToBottom() {
-    // Find the leftmost scrollable panel (expression list is on the left in desmos)
+    // Desmos의 expression list를 포함한 모든 스크롤 가능한 요소를 찾아서 모두 맨 아래로 스크롤
     const all = document.querySelectorAll('*');
-    let target = null;
-    let maxScroll = 0;
     for (const el of all) {
       if (el.scrollHeight > el.clientHeight + 5) {
-        const scrollRatio = el.scrollHeight / el.clientHeight;
-        if (scrollRatio > maxScroll) {
-          maxScroll = scrollRatio;
-          target = el;
-        }
+        el.scrollTop = el.scrollHeight;
       }
     }
-    if (target) {
-      // Double-rAF to ensure after paint
-      requestAnimationFrame(() => {
-        target.scrollTop = target.scrollHeight;
-        requestAnimationFrame(() => {
-          target.scrollTop = target.scrollHeight;
-        });
-      });
+    // Desmos iframe 내부도 시도 (cross-origin이면 실패할 수 있음)
+    try {
+      const iframe = document.querySelector('iframe');
+      if (iframe && iframe.contentDocument) {
+        const iframeAll = iframe.contentDocument.querySelectorAll('*');
+        for (const el of iframeAll) {
+          if (el.scrollHeight > el.clientHeight + 5) {
+            el.scrollTop = el.scrollHeight;
+          }
+        }
+      }
+    } catch (e) {
+      // cross-origin iframe이면 무시
     }
   }
 
