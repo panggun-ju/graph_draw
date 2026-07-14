@@ -1,6 +1,0 @@
-{
-  "name": "GraphSketch",
-  "description": "Convert images and sketches into parameterized mathematical equations plotted on a graphing calculator.",
-  "requestFramePermissions": [],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
-}
