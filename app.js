@@ -7,7 +7,7 @@
   const BATCH_SIZE = 20;
   const LINE_COLOR = '#2d2d2d';
   const EDGE_THRESH = 0.15;
-  const MIN_CONTOUR = 10;
+  const MIN_CONTOUR = 4;
 
   const fileInput = document.getElementById('file-input');
   const uploadBtn = document.getElementById('upload-btn');
@@ -183,8 +183,11 @@
     // DEBUG: Edge detection 결과 표시
     showDebugBinary('debug-edge', bin, w, h);
     
-    // Morphological Closing: 갭 채우기 (dilate radius=2)
-    const closed = closingBinary(bin, w, h, 2);
+    // Morphological Closing:  채우기 (r=1, 4회 반복)
+    let closed = bin;
+    for (let i = 0; i < 4; i++) {
+      closed = closingBinary(closed, w, h, 1);
+    }
     
     // Zhang-Suen thinning 적용
     zhangSuenThin(closed, w, h);
