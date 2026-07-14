@@ -322,6 +322,8 @@
   function traceAllContours(bin, w, h) {
     const visited = new Uint8Array(w * h);
     const contours = [];
+    
+    // 1차: 끝점/분기점에서 열린 곡선 tracing
     for (let y = 0; y < h; y++) {
       for (let x = 0; x < w; x++) {
         const idx = y*w+x;
