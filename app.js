@@ -141,20 +141,9 @@
     
     lastImage = img;
     showPreview(img);
-    setStatus('Processing...');
-    await tick();
+    setStatus('이미지를 불러왔습니다. "그리기" 버튼을 눌러주세요.');
     
-    // Check again before processing
-    if (animationCancelToken !== currentToken) return;
-    
-    const result = processImage(img);
-    setStatus('Drawing...');
-    await animateGraph(result.items, result.bounds);
-    
-    // Check if cancelled during animation
-    if (animationCancelToken !== currentToken) return;
-    
-    setStatus('Done \u2014 ' + result.items.length + ' curves');
+    // Show controls immediately
     controlsEl.style.display = 'flex';
   }
 
