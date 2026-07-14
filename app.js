@@ -6,7 +6,7 @@
   const RDP_EPS_MERGE = 1.5;  // merge 켤 때 더 강한 간결화
   const BATCH_SIZE = 20;
   const LINE_COLOR = '#2d2d2d';
-  const EDGE_THRESH = 0.15;
+  let EDGE_THRESH = 0.15;
   const MIN_CONTOUR = 10;
 
   const fileInput = document.getElementById('file-input');
@@ -90,13 +90,35 @@
 
     const mergeToggle = document.getElementById('merge-toggle');
     if (mergeToggle) {
-      mergeToggle.addEventListener('change', () => {
+      mergeToggle.addEventListener('change', async () => {
         if (lastImage) {
           setStatus('Re-processing (merge: ' + mergeToggle.checked + ')...');
           const result = processImage(lastImage);
-          animateGraph(result.items, result.bounds);
+          await animateGraph(result.items, result.bounds);
           setStatus('Done \u2014 ' + result.items.length + ' curves');
         }
+      });
+    }
+
+    const thresholdSlider = document.getElementById('threshold-slider');
+    const thresholdValue = document.getElementById('threshold-value');
+    const redrawBtn = document.getElementById('redraw-btn');
+
+    if (thresholdSlider && thresholdValue) {
+      thresholdSlider.addEventListener('input', () => {
+        thresholdValue.textContent = thresholdSlider.value;
+      });
+    }
+
+    if (redrawBtn) {
+      redrawBtn.addEventListener('click', async () => {
+        if (!lastImage) return;
+        EDGE_THRESH = parseFloat(thresholdSlider.value);
+        setStatus('Redrawing...');
+        await tick();
+        const result = processImage(lastImage);
+        await animateGraph(result.items, result.bounds);
+        setStatus('Done \u2014 ' + result.items.length + ' curves');
       });
     }
   }
