@@ -183,11 +183,8 @@
     // DEBUG: Edge detection 결과 표시
     showDebugBinary('debug-edge', bin, w, h);
     
-    // Morphological Closing:  채우기 (r=1, 4회 반복)
-    let closed = bin;
-    for (let i = 0; i < 4; i++) {
-      closed = closingBinary(closed, w, h, 1);
-    }
+    // Morphological Closing: 갭 채우기 (r=1 1회)
+    const closed = closingBinary(bin, w, h, 1);
     
     // Zhang-Suen thinning 적용
     zhangSuenThin(closed, w, h);
@@ -488,72 +485,68 @@
     const visited = new Uint8Array(w*h);
     const chains = [];
 
-    function neighbors4(idx) {
-      const x = idx%w, y = (idx-x)/w;
-      const result = [];
-      for (const [dx,dy] of [[1,0],[0,1],[-1,0],[0,-1]]) {
-        const nx=x+dx, ny=y+dy;
-        if (nx>=0 && nx<w && ny>=0 && ny<h && bin[ny*w+nx]===1) result.push(ny*w+nx);
-      }
-      return result;
-    }
-
-    function neighbors8(idx) {
-      const x = idx%w, y = (idx-x)/w;
-      const result = [];
-      for (const [dx,dy] of DIRS) {
-        const nx=x+dx, ny=y+dy;
-        if (nx>=0 && nx<w && ny>=0 && ny<h && bin[ny*w+nx]===1) result.push(ny*w+nx);
-      }
-      return result;
-    }
-
-    function isEndpoint(idx) { return neighbors4(idx).length === 1; }
-    function isJunction(idx) { return neighbors4(idx).length >= 3; }
-
-    // Phase 1: endpoint/junction에서 chain 추적
+    // 모든 skeleton pixel을 순회 - endpoint(n4=1)에서만 시작
     for (let idx = 0; idx < w*h; idx++) {
-      if (bin[idx]!==1 || visited[idx]) continue;
-      if (!isEndpoint(idx) && !isJunction(idx)) continue;
+      if (bin[idx] !== 1 || visited[idx]) continue;
+      if (countNeighbors4(bin, idx, w, h) !== 1) continue;
 
-      const nb = neighbors8(idx);
-      for (const next of nb) {
-        if (visited[idx] && visited[next]) continue;
-        const chain = [idx];
-        let prev = idx, cur = next;
-        let steps = 0;
-        while (steps++ < w*h*2) {
-          visited[prev] = 1;
-          chain.push(cur);
-          visited[cur] = 1;
-          if ((isEndpoint(cur) || isJunction(cur)) && cur !== idx) break;
-          const opts = neighbors8(cur).filter(n => n !== prev && !visited[n]);
-          if (opts.length === 0) break;
-          prev = cur; cur = opts[0];
-        }
-        if (chain.length >= 3) {
-          chains.push(chain.map(i => ({ x: i%w + ox, y: (i - i%w)/w + oy })));
-        }
-      }
-    }
-
-    // Phase 2: 남은 closed loop
-    for (let idx = 0; idx < w*h; idx++) {
-      if (bin[idx]!==1 || visited[idx]) continue;
+      visited[idx] = 1;
       const chain = [idx];
-      let prev = -1, cur = idx;
-      visited[cur] = 1;
-      let steps = 0;
-      while (steps++ < w*h*2) {
-        const opts = neighbors8(cur).filter(n => n !== prev && !visited[n]);
-        if (opts.length === 0) break;
-        prev = cur; cur = opts[0];
+      let cur = idx;
+
+      while (true) {
+        // 8-connected unvisited neighbor 찾기
+        const cx = cur % w, cy = (cur - cx) / w;
+        let next = -1;
+        for (const [dx, dy] of DIRS) {
+          const nx = cx+dx, ny = cy+dy;
+          if (nx>=0 && nx<w && ny>=0 && ny<h) {
+            const ni = ny*w+nx;
+            if (bin[ni]===1 && !visited[ni]) { next = ni; break; }
+          }
+        }
+        if (next === -1) break;
+
+        cur = next;
         visited[cur] = 1;
         chain.push(cur);
-        if (cur === idx) break;
+
+        const n4 = countNeighbors4(bin, cur, w, h);
+        if (n4 <= 1 || n4 >= 3) break; // endpoint나 junction 도달
       }
-      if (chain.length >= 3) {
-        chains.push(chain.map(i => ({ x: i%w + ox, y: (i - i%w)/w + oy })));
+
+      if (chain.length >= 4) {
+        chains.push(chain.map(i => ({ x: i%w + ox, y: Math.floor(i/w) + oy })));
+      }
+    }
+
+    // Phase 2: 고립된 loop / junction 시작 chain
+    for (let idx = 0; idx < w*h; idx++) {
+      if (bin[idx] !== 1 || visited[idx]) continue;
+      visited[idx] = 1;
+      const chain = [idx];
+      let cur = idx, prev = -1;
+
+      while (true) {
+        const cx = cur % w, cy = (cur - cx) / w;
+        let next = -1;
+        for (const [dx, dy] of DIRS) {
+          const nx = cx+dx, ny = cy+dy;
+          if (nx>=0 && nx<w && ny>=0 && ny<h) {
+            const ni = ny*w+nx;
+            if (bin[ni]===1 && !visited[ni]) { next = ni; break; }
+          }
+        }
+        if (next === -1) break;
+        prev = cur;
+        cur = next;
+        visited[cur] = 1;
+        chain.push(cur);
+        if (cur === idx) break; // closed loop
+      }
+
+      if (chain.length >= 4) {
+        chains.push(chain.map(i => ({ x: i%w + ox, y: Math.floor(i/w) + oy })));
       }
     }
 
