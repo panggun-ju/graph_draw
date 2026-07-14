@@ -117,18 +117,18 @@
 
     const mag = sobelRGB(px, w, h);
     const bin = thresholdEdges(mag, w, h);
-    const contours = traceAllContours(bin, w, h);
+    thinEdges(bin, w, h);  // Zhang-Suen: 두꺼운 엣지를 1픽셀 중심선으로
+    const contours = traceSkeleton(bin, w, h);  // 스켈레톤에서 chain 추출
 
     const mergeEnabled = document.getElementById('merge-toggle')?.checked ?? true;
     const eps = mergeEnabled ? RDP_EPS_MERGE : RDP_EPS;
 
-    // merge 켜면 RDP epsilon만 더 크게 — stroke 보존, 수식만 간결화
     const simplified = contours
       .filter(c => c.length >= MIN_CONTOUR)
       .map(c => rdpSimplify(c, eps))
       .filter(c => c.length >= 2);
 
-    console.log('[pipeline] contours:', contours.length, 'eps:', eps, 'after rdp:', simplified.length);
+    console.log('[pipeline] thinned contours:', contours.length, 'after rdp:', simplified.length);
     return contoursToExpressions(simplified, w, h);
   }
 
@@ -173,191 +173,138 @@
     return bin;
   }
 
-  // ═══════════════════════════════════════════════════════════════
-  //  CONTOUR TRACING
-  // ═══════════════════════════════════════════════════════════════
 
-  const DIRS = [[1,0],[1,-1],[0,-1],[-1,-1],[-1,0],[-1,1],[0,1],[1,1]];
 
-  function traceAllContours(bin, w, h) {
-    const visited = new Uint8Array(w * h);
-    const contours = [];
-    for (let y = 0; y < h; y++) {
-      for (let x = 0; x < w; x++) {
-        const idx = y*w+x;
-        if (bin[idx] !== 1 || visited[idx]) continue;
-        let onBoundary = false;
-        for (const [dx,dy] of [[1,0],[-1,0],[0,1],[0,-1]]) {
-          const nx = x+dx, ny = y+dy;
-          if (nx<0||nx>=w||ny<0||ny>=h||bin[ny*w+nx]===0) { onBoundary=true; break; }
-        }
-        if (!onBoundary) continue;
-        const contour = traceOneContour(bin, w, h, x, y, visited);
-        if (contour.length >= 4) contours.push(contour);
-      }
-    }
-    return contours;
-  }
-
-  function traceOneContour(bin, w, h, sx, sy, visited) {
-    const points = [];
-    let dir = 0;
-    for (let d = 0; d < 8; d++) {
-      const nx = sx+DIRS[d][0], ny = sy+DIRS[d][1];
-      if (nx>=0&&nx<w&&ny>=0&&ny<h&&bin[ny*w+nx]===0) { dir=(d+4)%8; break; }
-    }
-    let cx=sx, cy=sy;
-    visited[cy*w+cx] = 1;
-    for (let step = 0; step < w*h*4; step++) {
-      points.push({x:cx, y:cy});
-      let found = false;
-      for (let i = 0; i < 8; i++) {
-        const cd = (dir+5+i)%8;
-        const nx = cx+DIRS[cd][0], ny = cy+DIRS[cd][1];
-        if (nx<0||nx>=w||ny<0||ny>=h) continue;
-        if (bin[ny*w+nx]===0) continue;
-        cx=nx; cy=ny; visited[cy*w+cx]=1; dir=cd; found=true; break;
-      }
-      if (!found) break;
-      if (cx===sx&&cy===sy&&points.length>1) break;
-    }
-    return points;
-  }
 
   // ═══════════════════════════════════════════════════════════════
-  //  SKELETONIZATION (Zhang-Suen on each contour's bounding box)
+  //  ZHANG-SUEN THINNING (on binary edge image, before contour tracing)
   // ═══════════════════════════════════════════════════════════════
 
-  function skeletonizeAll(contours, imgW, imgH) {
-    const paths = [];
-    for (const contour of contours) {
-      if (contour.length < MIN_CONTOUR) { paths.push(contour); continue; }
-      const skel = skeletonizeOne(contour);
-      if (skel && skel.length >= MIN_CONTOUR) {
-        paths.push(...skel);
-      } else {
-        paths.push(contour);
-      }
-    }
-    return paths;
-  }
-
-  function skeletonizeOne(contour) {
-    let minX=Infinity, minY=Infinity, maxX=-Infinity, maxY=-Infinity;
-    for (const p of contour) {
-      minX=Math.min(minX,p.x); minY=Math.min(minY,p.y);
-      maxX=Math.max(maxX,p.x); maxY=Math.max(maxY,p.y);
-    }
-    const pad = 2;
-    const w = maxX-minX+1+pad*2;
-    const h = maxY-minY+1+pad*2;
-
-    const canvas = document.createElement('canvas');
-    canvas.width = w; canvas.height = h;
-    const ctx = canvas.getContext('2d');
-    ctx.fillStyle = '#fff';
-    ctx.beginPath();
-    ctx.moveTo(contour[0].x-minX+pad, contour[0].y-minY+pad);
-    for (let i = 1; i < contour.length; i++) {
-      ctx.lineTo(contour[i].x-minX+pad, contour[i].y-minY+pad);
-    }
-    ctx.closePath();
-    ctx.fill();
-
-    const imgData = ctx.getImageData(0,0,w,h);
-    const mask = new Uint8Array(w*h);
-    for (let i = 0; i < mask.length; i++) mask[i] = imgData.data[i*4+3]>0?1:0;
-
-    zhangSuen(mask, w, h);
-    return traceSkeletonChains(mask, w, h, minX, minY, pad);
-  }
-
-  function zhangSuen(mask, w, h) {
+  function thinEdges(bin, w, h) {
     let changed = true;
     while (changed) {
       changed = false;
       for (let pass = 0; pass < 2; pass++) {
         const remove = [];
-        for (let y = 1; y < h-1; y++) {
-          for (let x = 1; x < w-1; x++) {
-            const idx = y*w+x;
-            if (mask[idx]===0) continue;
+        for (let y = 1; y < h - 1; y++) {
+          for (let x = 1; x < w - 1; x++) {
+            const idx = y * w + x;
+            if (bin[idx] === 0) continue;
             const n = [
-              mask[(y-1)*w+x], mask[(y-1)*w+x+1], mask[y*w+x+1], mask[(y+1)*w+x+1],
-              mask[(y+1)*w+x], mask[(y+1)*w+x-1], mask[y*w+x-1], mask[(y-1)*w+x-1]
+              bin[(y-1)*w+x], bin[(y-1)*w+x+1], bin[y*w+x+1], bin[(y+1)*w+x+1],
+              bin[(y+1)*w+x], bin[(y+1)*w+x-1], bin[y*w+x-1], bin[(y-1)*w+x-1]
             ];
-            const count = n.reduce((s,v)=>s+v,0);
+            let count = 0;
+            for (let i = 0; i < 8; i++) count += n[i];
             let trans = 0;
-            for (let i = 0; i < 8; i++) { if (n[i]===0&&n[(i+1)%8]===1) trans++; }
-            const cond = pass===0
-              ? n[0]*n[2]*n[4]===0 && n[2]*n[4]*n[6]===0
-              : n[0]*n[2]*n[6]===0 && n[0]*n[4]*n[6]===0;
-            if (count>=2 && count<=6 && trans===1 && cond) remove.push(idx);
+            for (let i = 0; i < 8; i++) { if (n[i] === 0 && n[(i+1)%8] === 1) trans++; }
+            const cond = pass === 0
+              ? n[0]*n[2]*n[4] === 0 && n[2]*n[4]*n[6] === 0
+              : n[0]*n[2]*n[6] === 0 && n[0]*n[4]*n[6] === 0;
+            if (count >= 2 && count <= 6 && trans === 1 && cond) remove.push(idx);
           }
         }
         if (remove.length > 0) changed = true;
-        for (const idx of remove) mask[idx] = 0;
+        for (const idx of remove) bin[idx] = 0;
       }
     }
   }
 
-  function traceSkeletonChains(mask, w, h, ox, oy, pad) {
-    const seen = new Set();
+  // ═══════════════════════════════════════════════════════════════
+  //  SKELETON CHAIN TRACING (after thinning, extract line segments)
+  // ═══════════════════════════════════════════════════════════════
+
+  // 4-neighborhood dirs: right, down, left, up
+  const SKEL_DIRS = [[1,0],[0,1],[-1,0],[0,-1]];
+  // 8-neighborhood dirs for tracing
+  const TRACE_DIRS = [[1,0],[1,-1],[0,-1],[-1,-1],[-1,0],[-1,1],[0,1],[1,1]];
+
+  function traceSkeleton(bin, w, h) {
+    const visited = new Uint8Array(w * h);
     const chains = [];
 
-    function getNeighbors(idx) {
-      const x = idx%w, y = Math.floor(idx/w);
+    // Count 4-connected neighbors for each pixel
+    function neighbors4(idx) {
+      const x = idx % w, y = (idx - x) / w;
       const result = [];
-      for (const [dx,dy] of DIRS) {
-        const nx=x+dx, ny=y+dy;
-        if (nx>=0&&nx<w&&ny>=0&&ny<h&&mask[ny*w+nx]===1) result.push(ny*w+nx);
+      for (const [dx, dy] of SKEL_DIRS) {
+        const nx = x + dx, ny = y + dy;
+        if (nx >= 0 && nx < w && ny >= 0 && ny < h && bin[ny*w+nx] === 1) {
+          result.push(ny * w + nx);
+        }
       }
       return result;
     }
 
-    function isEndpoint(idx) {
-      const nb = getNeighbors(idx);
-      return nb.length === 1 || nb.length >= 3;
+    // Count 8-connected neighbors
+    function neighbors8(idx) {
+      const x = idx % w, y = (idx - x) / w;
+      const result = [];
+      for (const [dx, dy] of TRACE_DIRS) {
+        const nx = x + dx, ny = y + dy;
+        if (nx >= 0 && nx < w && ny >= 0 && ny < h && bin[ny*w+nx] === 1) {
+          result.push(ny * w + nx);
+        }
+      }
+      return result;
     }
 
-    for (let idx = 0; idx < mask.length; idx++) {
-      if (mask[idx]===0 || seen.has(idx)) continue;
-      const nb = getNeighbors(idx);
-      if (nb.length !== 1 && nb.length !== 3) continue;
+    // Find all endpoints (exactly 1 neighbor in 4-conn) and junctions (>=3 in 4-conn)
+    function isEndpoint(idx) {
+      return neighbors4(idx).length === 1;
+    }
+    function isJunction(idx) {
+      return neighbors4(idx).length >= 3;
+    }
 
+    // Phase 1: trace chains between endpoints/junctions
+    for (let idx = 0; idx < w * h; idx++) {
+      if (bin[idx] !== 1 || visited[idx]) continue;
+      if (!isEndpoint(idx) && !isJunction(idx)) continue;
+
+      const nb = neighbors8(idx);
       for (const next of nb) {
-        if (seen.has(idx) && seen.has(next)) continue;
+        if (visited[next] && visited[idx]) continue;
         const chain = [idx];
         let prev = idx, cur = next;
-        while (true) {
-          seen.add(prev+'-'+cur);
+        let steps = 0;
+        while (steps++ < w * h * 2) {
+          visited[prev] = 1;
           chain.push(cur);
-          const opts = getNeighbors(cur).filter(n => n !== prev);
-          if (opts.length !== 1) break;
-          prev = cur; cur = opts[0];
-          if (seen.has(prev+'-'+cur)) break;
+          visited[cur] = 1;
+          // If we reached an endpoint or junction, stop
+          if ((isEndpoint(cur) || isJunction(cur)) && cur !== idx) break;
+          const nb8 = neighbors8(cur);
+          const opts = nb8.filter(n => n !== prev && !visited[n]);
+          if (opts.length === 0) break;
+          prev = cur;
+          cur = opts[0];
         }
-        if (chain.length >= MIN_CONTOUR) {
-          chains.push(chain.map(i => ({x: (i%w)+ox-pad, y: Math.floor(i/w)+oy-pad})));
+        if (chain.length >= 4) {
+          chains.push(chain.map(i => ({ x: i % w, y: (i - (i % w)) / w })));
         }
       }
     }
 
-    if (chains.length === 0) {
-      for (let idx = 0; idx < mask.length; idx++) {
-        if (mask[idx]===0 || seen.has(idx)) continue;
-        const chain = [idx];
-        let prev = -1, cur = idx;
-        while (true) {
-          seen.add(cur);
-          const nb = getNeighbors(cur).filter(n => n !== prev && !seen.has(n));
-          if (nb.length === 0) break;
-          prev = cur; cur = nb[0];
-          chain.push(cur);
-        }
-        if (chain.length >= MIN_CONTOUR) {
-          chains.push(chain.map(i => ({x: (i%w)+ox-pad, y: Math.floor(i/w)+oy-pad})));
-        }
+    // Phase 2: trace remaining closed loops (no endpoints)
+    for (let idx = 0; idx < w * h; idx++) {
+      if (bin[idx] !== 1 || visited[idx]) continue;
+      const chain = [idx];
+      let prev = -1, cur = idx;
+      visited[cur] = 1;
+      let steps = 0;
+      while (steps++ < w * h * 2) {
+        const nb8 = neighbors8(cur);
+        const opts = nb8.filter(n => n !== prev && !visited[n]);
+        if (opts.length === 0) break;
+        prev = cur;
+        cur = opts[0];
+        visited[cur] = 1;
+        chain.push(cur);
+        if (cur === idx) break; // closed loop
+      }
+      if (chain.length >= 4) {
+        chains.push(chain.map(i => ({ x: i % w, y: (i - (i % w)) / w })));
       }
     }
 
@@ -560,38 +507,59 @@
         setStatus(`Drawing... ${i + 1}/${total}`);
       }
       // yield to browser for rendering, then scroll to bottom
-      await new Promise(r => {
-        requestAnimationFrame(() => {
-          scrollExprListToBottom();
-          r();
-        });
-      });
+      if (i % 5 === 0) {
+        await new Promise(r => setTimeout(r, 10));
+        scrollExprListToBottom();
+      }
     }
     
     setStatus(`Done! ${total} curves`);
   }
 
   function scrollExprListToBottom() {
-    // Desmos의 expression list를 포함한 모든 스크롤 가능한 요소를 찾아서 모두 맨 아래로 스크롤
-    const all = document.querySelectorAll('*');
-    for (const el of all) {
-      if (el.scrollHeight > el.clientHeight + 5) {
-        el.scrollTop = el.scrollHeight;
+    // Desmos의 expression list 직접 찾기
+    const expressionList = document.querySelector('.dcg-expressions-container');
+    if (expressionList) {
+      // 마지막 expression으로 스크롤
+      const lastExpr = expressionList.querySelector('.dcg-expressionitem:last-child');
+      if (lastExpr) {
+        lastExpr.scrollIntoView({ behavior: 'auto', block: 'end' });
       }
     }
-    // Desmos iframe 내부도 시도 (cross-origin이면 실패할 수 있음)
-    try {
-      const iframe = document.querySelector('iframe');
-      if (iframe && iframe.contentDocument) {
-        const iframeAll = iframe.contentDocument.querySelectorAll('*');
-        for (const el of iframeAll) {
-          if (el.scrollHeight > el.clientHeight + 5) {
-            el.scrollTop = el.scrollHeight;
+    
+    // 모든 iframe 내부도 시도
+    const iframes = document.querySelectorAll('iframe');
+    for (const iframe of iframes) {
+      try {
+        const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document;
+        if (iframeDoc) {
+          const iframeExprList = iframeDoc.querySelector('.dcg-expressions-container');
+          if (iframeExprList) {
+            const lastExpr = iframeExprList.querySelector('.dcg-expressionitem:last-child');
+            if (lastExpr) {
+              lastExpr.scrollIntoView({ behavior: 'auto', block: 'end' });
+            }
+          }
+          
+          // 모든 스크롤 가능한 요소도 시도
+          const iframeAll = iframeDoc.querySelectorAll('*');
+          for (const el of iframeAll) {
+            if (el.scrollHeight > el.clientHeight + 10) {
+              el.scrollTop = el.scrollHeight;
+            }
           }
         }
+      } catch (e) {
+        // cross-origin iframe는 무시
       }
-    } catch (e) {
-      // cross-origin iframe이면 무시
+    }
+    
+    // 백업: 모든 요소의 스크롤을 맨 아래로
+    const all = document.querySelectorAll('*');
+    for (const el of all) {
+      if (el.scrollHeight > el.clientHeight + 10) {
+        el.scrollTop = el.scrollHeight;
+      }
     }
   }
 
