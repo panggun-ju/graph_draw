@@ -102,7 +102,7 @@
 
     const thresholdSlider = document.getElementById('threshold-slider');
     const thresholdValue = document.getElementById('threshold-value');
-    const redrawBtn = document.getElementById('redraw-btn');
+    const drawBtn = document.getElementById('draw-btn');
 
     if (thresholdSlider && thresholdValue) {
       thresholdSlider.addEventListener('input', () => {
@@ -110,11 +110,11 @@
       });
     }
 
-    if (redrawBtn) {
-      redrawBtn.addEventListener('click', async () => {
+    if (drawBtn) {
+      drawBtn.addEventListener('click', async () => {
         if (!lastImage) return;
         EDGE_THRESH = parseFloat(thresholdSlider.value);
-        setStatus('Redrawing...');
+        setStatus('Drawing...');
         await tick();
         const result = processImage(lastImage);
         await animateGraph(result.items, result.bounds);

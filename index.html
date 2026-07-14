@@ -73,15 +73,13 @@
     </div>
     <div id="status">Ready</div>
     <div id="controls" style="display:none;">
-      <div style="display:flex;flex-direction:column;gap:6px;">
+      <div style="display:flex;flex-direction:column;gap:6px;margin-bottom:8px;">
         <label style="font-size:13px;color:#555;">
           Edge Threshold: <span id="threshold-value">0.15</span>
         </label>
-        <div style="display:flex;gap:8px;align-items:center;">
-          <input type="range" id="threshold-slider" min="0.01" max="0.30" step="0.01" value="0.15" style="flex:1;">
-          <button class="ctrl-btn" id="redraw-btn" style="padding:6px 12px;">다시 그리기</button>
-        </div>
+        <input type="range" id="threshold-slider" min="0.01" max="0.50" step="0.01" value="0.15" style="width:100%;">
       </div>
+      <button class="ctrl-btn" id="draw-btn" style="margin-bottom:8px;">그리기</button>
       <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:#555;cursor:pointer;">
         <input type="checkbox" id="merge-toggle" checked>
         Merge 단계
