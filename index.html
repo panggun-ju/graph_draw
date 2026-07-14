@@ -38,6 +38,29 @@
     #preview-area img { max-width: 100%; max-height: 240px; object-fit: contain; }
     #preview-area .placeholder { color: #bbb; font-size: 13px; }
 
+    #debug-area {
+      display: flex; flex-direction: column; gap: 8px;
+    }
+    #debug-area h3 {
+      font-size: 13px; color: #555; margin: 0;
+    }
+    .debug-stage {
+      display: flex; flex-direction: column; gap: 2px;
+    }
+    .debug-stage > span {
+      font-size: 11px; color: #888;
+    }
+    .debug-stage > div {
+      border: 1px solid #e0e0e0; border-radius: 4px;
+      overflow: hidden; background: #000;
+      min-height: 60px; display: flex;
+      align-items: center; justify-content: center;
+    }
+    .debug-stage canvas {
+      width: 100%;
+      image-rendering: pixelated;
+    }
+
     #status {
       font-size: 12px; color: #888; min-height: 18px;
       padding: 6px 10px; background: #f8f8f8; border-radius: 6px;
@@ -66,6 +89,21 @@
     <input type="file" id="file-input" accept="image/*">
     <div id="preview-area">
       <span class="placeholder">이미지를 업로드하세요</span>
+    </div>
+    <div id="debug-area">
+      <h3>디버그 단계</h3>
+      <div class="debug-stage">
+        <span>1. Edge Detection</span>
+        <div id="debug-edge"></div>
+      </div>
+      <div class="debug-stage">
+        <span>2. Thinning</span>
+        <div id="debug-thin"></div>
+      </div>
+      <div class="debug-stage">
+        <span>3. Skeleton Tracing</span>
+        <div id="debug-skeleton"></div>
+      </div>
     </div>
     <div id="status">Ready</div>
     <div id="controls" style="display:none;">

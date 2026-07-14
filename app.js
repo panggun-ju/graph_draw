@@ -94,6 +94,66 @@
 
   function tick() { return new Promise(r => setTimeout(r, 0)); }
 
+  // ═══════════════════════════════════════════════════════════════
+  //  DEBUG IMAGE DISPLAY
+  // ═══════════════════════════════════════════════════════════════
+
+  function showDebugBinary(containerId, bin, w, h) {
+    const container = document.getElementById(containerId);
+    if (!container) return;
+    
+    const canvas = document.createElement('canvas');
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext('2d');
+    const imgData = ctx.createImageData(w, h);
+    
+    for (let i = 0; i < w * h; i++) {
+      const v = bin[i] ? 255 : 0;
+      imgData.data[i * 4] = v;     // R
+      imgData.data[i * 4 + 1] = v; // G
+      imgData.data[i * 4 + 2] = v; // B
+      imgData.data[i * 4 + 3] = 255; // A
+    }
+    
+    ctx.putImageData(imgData, 0, 0);
+    container.innerHTML = '';
+    container.appendChild(canvas);
+  }
+
+  function showDebugContours(containerId, contours, w, h) {
+    const container = document.getElementById(containerId);
+    if (!container) return;
+    
+    const canvas = document.createElement('canvas');
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext('2d');
+    
+    // 검정 배경
+    ctx.fillStyle = 'black';
+    ctx.fillRect(0, 0, w, h);
+    
+    // 각 contour를 다른 색으로 그리기
+    const colors = ['#ff0000', '#00ff00', '#0000ff', '#ffff00', '#ff00ff', '#00ffff', '#ff8800', '#88ff00'];
+    
+    contours.forEach((contour, idx) => {
+      if (contour.length < 2) return;
+      
+      ctx.strokeStyle = colors[idx % colors.length];
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(contour[0].x, contour[0].y);
+      for (let i = 1; i < contour.length; i++) {
+        ctx.lineTo(contour[i].x, contour[i].y);
+      }
+      ctx.stroke();
+    });
+    
+    container.innerHTML = '';
+    container.appendChild(canvas);
+  }
+
   function clearAll() {
     calculator.setBlank();
     calculator.setMathBounds({ left: -12, right: 12, bottom: -12, top: 12 });
@@ -117,8 +177,21 @@
 
     const mag = sobelRGB(px, w, h);
     const bin = thresholdEdges(mag, w, h);
-    thinEdges(bin, w, h);  // Zhang-Suen: 두꺼운 엣지를 1픽셀 중심선으로
-    const contours = traceSkeleton(bin, w, h);  // 스켈레톤에서 chain 추출
+    
+    // DEBUG: Edge detection 결과 표시
+    showDebugBinary('debug-edge', bin, w, h);
+    
+    // Zhang-Suen thinning 적용
+    zhangSuenThin(bin, w, h);
+    
+    // DEBUG: Thinning 결과 표시
+    showDebugBinary('debug-thin', bin, w, h);
+    
+    // Skeleton에서 contour 추출
+    const contours = traceSkeletonChains(bin, w, h, 0, 0);
+    
+    // DEBUG: Skeleton chains 표시
+    showDebugContours('debug-skeleton', contours, w, h);
 
     const mergeEnabled = document.getElementById('merge-toggle')?.checked ?? true;
     const eps = mergeEnabled ? RDP_EPS_MERGE : RDP_EPS;
@@ -128,7 +201,7 @@
       .map(c => rdpSimplify(c, eps))
       .filter(c => c.length >= 2);
 
-    console.log('[pipeline] thinned contours:', contours.length, 'after rdp:', simplified.length);
+    console.log('[pipeline] contours:', contours.length, 'after rdp:', simplified.length);
     return contoursToExpressions(simplified, w, h);
   }
 
@@ -177,19 +250,164 @@
 
 
   // ═══════════════════════════════════════════════════════════════
-  //  ZHANG-SUEN THINNING (on binary edge image, before contour tracing)
+  //  OUTER BOUNDARY TRACING
   // ═══════════════════════════════════════════════════════════════
 
-  function thinEdges(bin, w, h) {
+  const DIRS = [[1,0],[1,-1],[0,-1],[-1,-1],[-1,0],[-1,1],[0,1],[1,1]];
+
+  function traceAllContours(bin, w, h) {
+    const visited = new Uint8Array(w * h);
+    const contours = [];
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const idx = y*w+x;
+        if (bin[idx] !== 1 || visited[idx]) continue;
+        // 외곽 시작점: 경계거나 빈 neighbor가 있음
+        let onBoundary = false;
+        for (const [dx,dy] of [[1,0],[-1,0],[0,1],[0,-1]]) {
+          const nx = x+dx, ny = y+dy;
+          if (nx<0||nx>=w||ny<0||ny>=h||bin[ny*w+nx]===0) { onBoundary=true; break; }
+        }
+        if (!onBoundary) continue;
+        const contour = traceOneContour(bin, w, h, x, y, visited);
+        if (contour.length >= 4) contours.push(contour);
+      }
+    }
+    return contours;
+  }
+
+  function traceOneContour(bin, w, h, sx, sy, visited) {
+    const points = [];
+    let dir = 0;
+    for (let d = 0; d < 8; d++) {
+      const nx = sx+DIRS[d][0], ny = sy+DIRS[d][1];
+      if (nx<0||nx>=w||ny<0||ny>=h||bin[ny*w+nx]===0) { dir=(d+4)%8; break; }
+    }
+    let cx=sx, cy=sy;
+    visited[cy*w+cx] = 1;
+    for (let step = 0; step < w*h*4; step++) {
+      points.push({x:cx, y:cy});
+      let found = false;
+      for (let i = 0; i < 8; i++) {
+        const cd = (dir+5+i)%8;
+        const nx = cx+DIRS[cd][0], ny = cy+DIRS[cd][1];
+        if (nx<0||nx>=w||ny<0||ny>=h||bin[ny*w+nx]===0) continue;
+        cx=nx; cy=ny; visited[cy*w+cx]=1; dir=cd; found=true; break;
+      }
+      if (!found) break;
+      if (cx===sx&&cy===sy&&points.length>1) break;
+    }
+    return points;
+  }
+
+  // ═══════════════════════════════════════════════════════════════
+  //  GROUP NEARBY CONTOURS
+  // ═══════════════════════════════════════════════════════════════
+
+  function groupNearbyContours(contours) {
+    if (contours.length === 0) return [];
+
+    // 각 contour의 bounding box
+    const bboxes = contours.map(c => {
+      let minX=Infinity, minY=Infinity, maxX=-Infinity, maxY=-Infinity;
+      for (const p of c) {
+        minX=Math.min(minX,p.x); minY=Math.min(minY,p.y);
+        maxX=Math.max(maxX,p.x); maxY=Math.max(maxY,p.y);
+      }
+      return {minX, minY, maxX, maxY};
+    });
+
+    // Union-Find로 근접한 contour들을 같은 그룹으로
+    const parent = Array.from({length: contours.length}, (_,i) => i);
+    function find(x) { return parent[x]===x ? x : (parent[x]=find(parent[x])); }
+    function union(a,b) { parent[find(a)] = find(b); }
+
+    const GROUP_DIST = 8; // 픽셀
+    for (let i = 0; i < contours.length; i++) {
+      const bi = bboxes[i];
+      for (let j = i+1; j < contours.length; j++) {
+        const bj = bboxes[j];
+        const dx = Math.max(0, Math.max(bi.minX - bj.maxX, bj.minX - bi.maxX));
+        const dy = Math.max(0, Math.max(bi.minY - bj.maxY, bj.minY - bi.maxY));
+        if (dx*dx + dy*dy <= GROUP_DIST*GROUP_DIST) {
+          union(i, j);
+        }
+      }
+    }
+
+    const groupMap = new Map();
+    for (let i = 0; i < contours.length; i++) {
+      const root = find(i);
+      if (!groupMap.has(root)) groupMap.set(root, []);
+      groupMap.get(root).push(i);
+    }
+
+    return Array.from(groupMap.values()).map(indices => indices.map(i => contours[i]));
+  }
+
+  // ═══════════════════════════════════════════════════════════════
+  //  SKELETONIZE GROUP
+  //  그룹의 contour들을 canvas에 그린 후 thin → chain 추출
+  // ═══════════════════════════════════════════════════════════════
+
+  function skeletonizeGroup(contourGroup, imgW, imgH) {
+    // bounding box
+    let minX=Infinity, minY=Infinity, maxX=-Infinity, maxY=-Infinity;
+    for (const contour of contourGroup) {
+      for (const p of contour) {
+        minX=Math.min(minX,p.x); minY=Math.min(minY,p.y);
+        maxX=Math.max(maxX,p.x); maxY=Math.max(maxY,p.y);
+      }
+    }
+    const pad = 4;
+    const bx = Math.max(0, minX-pad);
+    const by = Math.max(0, minY-pad);
+    const bw = Math.min(imgW, maxX+pad+1) - bx;
+    const bh = Math.min(imgH, maxY+pad+1) - by;
+
+    // canvas에 contour들을 선으로 그림
+    const canvas = document.createElement('canvas');
+    canvas.width = bw; canvas.height = bh;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = 'white';
+    ctx.fillRect(0, 0, bw, bh);
+    ctx.fillStyle = 'black';
+    ctx.strokeStyle = 'black';
+    ctx.lineWidth = 1;
+    for (const contour of contourGroup) {
+      if (contour.length < 2) continue;
+      ctx.beginPath();
+      ctx.moveTo(contour[0].x - bx, contour[0].y - by);
+      for (let i = 1; i < contour.length; i++) {
+        ctx.lineTo(contour[i].x - bx, contour[i].y - by);
+      }
+      ctx.stroke();
+    }
+
+    // binary mask 추출
+    const imgData = ctx.getImageData(0, 0, bw, bh);
+    const mask = new Uint8Array(bw * bh);
+    for (let i = 0; i < bw*bh; i++) {
+      mask[i] = imgData.data[i*4] < 128 ? 1 : 0;
+    }
+
+    // Zhang-Suen thinning
+    zhangSuenThin(mask, bw, bh);
+
+    // skeleton chain 추출
+    return traceSkeletonChains(mask, bw, bh, bx, by);
+  }
+
+  function zhangSuenThin(bin, w, h) {
     let changed = true;
     while (changed) {
       changed = false;
       for (let pass = 0; pass < 2; pass++) {
         const remove = [];
-        for (let y = 1; y < h - 1; y++) {
-          for (let x = 1; x < w - 1; x++) {
-            const idx = y * w + x;
-            if (bin[idx] === 0) continue;
+        for (let y = 1; y < h-1; y++) {
+          for (let x = 1; x < w-1; x++) {
+            const idx = y*w+x;
+            if (bin[idx]===0) continue;
             const n = [
               bin[(y-1)*w+x], bin[(y-1)*w+x+1], bin[y*w+x+1], bin[(y+1)*w+x+1],
               bin[(y+1)*w+x], bin[(y+1)*w+x-1], bin[y*w+x-1], bin[(y-1)*w+x-1]
@@ -197,11 +415,11 @@
             let count = 0;
             for (let i = 0; i < 8; i++) count += n[i];
             let trans = 0;
-            for (let i = 0; i < 8; i++) { if (n[i] === 0 && n[(i+1)%8] === 1) trans++; }
-            const cond = pass === 0
-              ? n[0]*n[2]*n[4] === 0 && n[2]*n[4]*n[6] === 0
-              : n[0]*n[2]*n[6] === 0 && n[0]*n[4]*n[6] === 0;
-            if (count >= 2 && count <= 6 && trans === 1 && cond) remove.push(idx);
+            for (let i = 0; i < 8; i++) { if (n[i]===0 && n[(i+1)%8]===1) trans++; }
+            const cond = pass===0
+              ? n[0]*n[2]*n[4]===0 && n[2]*n[4]*n[6]===0
+              : n[0]*n[2]*n[6]===0 && n[0]*n[4]*n[6]===0;
+            if (count>=2 && count<=6 && trans===1 && cond) remove.push(idx);
           }
         }
         if (remove.length > 0) changed = true;
@@ -210,101 +428,76 @@
     }
   }
 
-  // ═══════════════════════════════════════════════════════════════
-  //  SKELETON CHAIN TRACING (after thinning, extract line segments)
-  // ═══════════════════════════════════════════════════════════════
-
-  // 4-neighborhood dirs: right, down, left, up
-  const SKEL_DIRS = [[1,0],[0,1],[-1,0],[0,-1]];
-  // 8-neighborhood dirs for tracing
-  const TRACE_DIRS = [[1,0],[1,-1],[0,-1],[-1,-1],[-1,0],[-1,1],[0,1],[1,1]];
-
-  function traceSkeleton(bin, w, h) {
-    const visited = new Uint8Array(w * h);
+  function traceSkeletonChains(bin, w, h, ox, oy) {
+    const visited = new Uint8Array(w*h);
     const chains = [];
 
-    // Count 4-connected neighbors for each pixel
     function neighbors4(idx) {
-      const x = idx % w, y = (idx - x) / w;
+      const x = idx%w, y = (idx-x)/w;
       const result = [];
-      for (const [dx, dy] of SKEL_DIRS) {
-        const nx = x + dx, ny = y + dy;
-        if (nx >= 0 && nx < w && ny >= 0 && ny < h && bin[ny*w+nx] === 1) {
-          result.push(ny * w + nx);
-        }
+      for (const [dx,dy] of [[1,0],[0,1],[-1,0],[0,-1]]) {
+        const nx=x+dx, ny=y+dy;
+        if (nx>=0 && nx<w && ny>=0 && ny<h && bin[ny*w+nx]===1) result.push(ny*w+nx);
       }
       return result;
     }
 
-    // Count 8-connected neighbors
     function neighbors8(idx) {
-      const x = idx % w, y = (idx - x) / w;
+      const x = idx%w, y = (idx-x)/w;
       const result = [];
-      for (const [dx, dy] of TRACE_DIRS) {
-        const nx = x + dx, ny = y + dy;
-        if (nx >= 0 && nx < w && ny >= 0 && ny < h && bin[ny*w+nx] === 1) {
-          result.push(ny * w + nx);
-        }
+      for (const [dx,dy] of DIRS) {
+        const nx=x+dx, ny=y+dy;
+        if (nx>=0 && nx<w && ny>=0 && ny<h && bin[ny*w+nx]===1) result.push(ny*w+nx);
       }
       return result;
     }
 
-    // Find all endpoints (exactly 1 neighbor in 4-conn) and junctions (>=3 in 4-conn)
-    function isEndpoint(idx) {
-      return neighbors4(idx).length === 1;
-    }
-    function isJunction(idx) {
-      return neighbors4(idx).length >= 3;
-    }
+    function isEndpoint(idx) { return neighbors4(idx).length === 1; }
+    function isJunction(idx) { return neighbors4(idx).length >= 3; }
 
-    // Phase 1: trace chains between endpoints/junctions
-    for (let idx = 0; idx < w * h; idx++) {
-      if (bin[idx] !== 1 || visited[idx]) continue;
+    // Phase 1: endpoint/junction에서 chain 추적
+    for (let idx = 0; idx < w*h; idx++) {
+      if (bin[idx]!==1 || visited[idx]) continue;
       if (!isEndpoint(idx) && !isJunction(idx)) continue;
 
       const nb = neighbors8(idx);
       for (const next of nb) {
-        if (visited[next] && visited[idx]) continue;
+        if (visited[idx] && visited[next]) continue;
         const chain = [idx];
         let prev = idx, cur = next;
         let steps = 0;
-        while (steps++ < w * h * 2) {
+        while (steps++ < w*h*2) {
           visited[prev] = 1;
           chain.push(cur);
           visited[cur] = 1;
-          // If we reached an endpoint or junction, stop
           if ((isEndpoint(cur) || isJunction(cur)) && cur !== idx) break;
-          const nb8 = neighbors8(cur);
-          const opts = nb8.filter(n => n !== prev && !visited[n]);
+          const opts = neighbors8(cur).filter(n => n !== prev && !visited[n]);
           if (opts.length === 0) break;
-          prev = cur;
-          cur = opts[0];
+          prev = cur; cur = opts[0];
         }
-        if (chain.length >= 4) {
-          chains.push(chain.map(i => ({ x: i % w, y: (i - (i % w)) / w })));
+        if (chain.length >= 3) {
+          chains.push(chain.map(i => ({ x: i%w + ox, y: (i - i%w)/w + oy })));
         }
       }
     }
 
-    // Phase 2: trace remaining closed loops (no endpoints)
-    for (let idx = 0; idx < w * h; idx++) {
-      if (bin[idx] !== 1 || visited[idx]) continue;
+    // Phase 2: 남은 closed loop
+    for (let idx = 0; idx < w*h; idx++) {
+      if (bin[idx]!==1 || visited[idx]) continue;
       const chain = [idx];
       let prev = -1, cur = idx;
       visited[cur] = 1;
       let steps = 0;
-      while (steps++ < w * h * 2) {
-        const nb8 = neighbors8(cur);
-        const opts = nb8.filter(n => n !== prev && !visited[n]);
+      while (steps++ < w*h*2) {
+        const opts = neighbors8(cur).filter(n => n !== prev && !visited[n]);
         if (opts.length === 0) break;
-        prev = cur;
-        cur = opts[0];
+        prev = cur; cur = opts[0];
         visited[cur] = 1;
         chain.push(cur);
-        if (cur === idx) break; // closed loop
+        if (cur === idx) break;
       }
-      if (chain.length >= 4) {
-        chains.push(chain.map(i => ({ x: i % w, y: (i - (i % w)) / w })));
+      if (chain.length >= 3) {
+        chains.push(chain.map(i => ({ x: i%w + ox, y: (i - i%w)/w + oy })));
       }
     }
 
@@ -517,12 +710,29 @@
   }
 
   function scrollExprListToBottom() {
-    // Desmos API를 사용해서 마지막 expression으로 스크롤
-    const expressions = calculator.getExpressions();
-    if (expressions.length > 0) {
-      const lastExpr = expressions[expressions.length - 1];
-      if (lastExpr && lastExpr.id) {
-        calculator.scrollToExpression(lastExpr.id);
+    // 모든 스크롤 가능한 요소를 찾아서 맨 아래로 이동
+    const allElements = document.querySelectorAll('*');
+    for (const el of allElements) {
+      if (el.scrollHeight > el.clientHeight) {
+        el.scrollTop = el.scrollHeight;
+      }
+    }
+    
+    // iframe 내부도 시도 (cross-origin이면 실패할 수 있음)
+    const iframes = document.querySelectorAll('iframe');
+    for (const iframe of iframes) {
+      try {
+        const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document;
+        if (iframeDoc) {
+          const iframeElements = iframeDoc.querySelectorAll('*');
+          for (const el of iframeElements) {
+            if (el.scrollHeight > el.clientHeight) {
+              el.scrollTop = el.scrollHeight;
+            }
+          }
+        }
+      } catch (e) {
+        // cross-origin iframe는 무시
       }
     }
   }
