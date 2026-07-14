@@ -99,17 +99,6 @@
         }
       });
     }
-
-    if (drawBtn) {
-      drawBtn.addEventListener('click', async () => {
-        if (!lastImage) return;
-        setStatus('Drawing...');
-        await tick();
-        const result = processImage(lastImage);
-        await animateGraph(result.items, result.bounds);
-        setStatus('Done \u2014 ' + result.items.length + ' curves');
-      });
-    }
   }
 
   function setStatus(msg) { statusEl.textContent = msg; }
@@ -130,10 +119,25 @@
     
     lastImage = img;
     showPreview(img);
-    setStatus('이미지를 불러왔습니다. "그리기" 버튼을 눌러주세요.');
     
-    // Show controls immediately
+    // Show controls
     controlsEl.style.display = 'flex';
+    
+    // Process and draw immediately
+    setStatus('Processing...');
+    await tick();
+    
+    // Check if cancelled
+    if (animationCancelToken !== currentToken) return;
+    
+    const result = processImage(img);
+    setStatus('Drawing...');
+    await animateGraph(result.items, result.bounds);
+    
+    // Check if cancelled
+    if (animationCancelToken !== currentToken) return;
+    
+    setStatus('Done \u2014 ' + result.items.length + ' curves');
   }
 
   function loadImage(file) {
