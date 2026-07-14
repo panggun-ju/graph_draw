@@ -517,48 +517,12 @@
   }
 
   function scrollExprListToBottom() {
-    // Desmos의 expression list 직접 찾기
-    const expressionList = document.querySelector('.dcg-expressions-container');
-    if (expressionList) {
-      // 마지막 expression으로 스크롤
-      const lastExpr = expressionList.querySelector('.dcg-expressionitem:last-child');
-      if (lastExpr) {
-        lastExpr.scrollIntoView({ behavior: 'auto', block: 'end' });
-      }
-    }
-    
-    // 모든 iframe 내부도 시도
-    const iframes = document.querySelectorAll('iframe');
-    for (const iframe of iframes) {
-      try {
-        const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document;
-        if (iframeDoc) {
-          const iframeExprList = iframeDoc.querySelector('.dcg-expressions-container');
-          if (iframeExprList) {
-            const lastExpr = iframeExprList.querySelector('.dcg-expressionitem:last-child');
-            if (lastExpr) {
-              lastExpr.scrollIntoView({ behavior: 'auto', block: 'end' });
-            }
-          }
-          
-          // 모든 스크롤 가능한 요소도 시도
-          const iframeAll = iframeDoc.querySelectorAll('*');
-          for (const el of iframeAll) {
-            if (el.scrollHeight > el.clientHeight + 10) {
-              el.scrollTop = el.scrollHeight;
-            }
-          }
-        }
-      } catch (e) {
-        // cross-origin iframe는 무시
-      }
-    }
-    
-    // 백업: 모든 요소의 스크롤을 맨 아래로
-    const all = document.querySelectorAll('*');
-    for (const el of all) {
-      if (el.scrollHeight > el.clientHeight + 10) {
-        el.scrollTop = el.scrollHeight;
+    // Desmos API를 사용해서 마지막 expression으로 스크롤
+    const expressions = calculator.getExpressions();
+    if (expressions.length > 0) {
+      const lastExpr = expressions[expressions.length - 1];
+      if (lastExpr && lastExpr.id) {
+        calculator.scrollToExpression(lastExpr.id);
       }
     }
   }
