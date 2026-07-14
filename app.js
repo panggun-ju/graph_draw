@@ -6,7 +6,7 @@
   const RDP_EPS_MERGE = 1.5;  // merge 켤 때 더 강한 간결화
   const BATCH_SIZE = 20;
   const LINE_COLOR = '#2d2d2d';
-  let EDGE_THRESH = 0.15;
+  const EDGE_THRESH = 0.15;
   const MIN_CONTOUR = 10;
 
   const fileInput = document.getElementById('file-input');
@@ -100,20 +100,9 @@
       });
     }
 
-    const thresholdSlider = document.getElementById('threshold-slider');
-    const thresholdValue = document.getElementById('threshold-value');
-    const drawBtn = document.getElementById('draw-btn');
-
-    if (thresholdSlider && thresholdValue) {
-      thresholdSlider.addEventListener('input', () => {
-        thresholdValue.textContent = thresholdSlider.value;
-      });
-    }
-
     if (drawBtn) {
       drawBtn.addEventListener('click', async () => {
         if (!lastImage) return;
-        EDGE_THRESH = parseFloat(thresholdSlider.value);
         setStatus('Drawing...');
         await tick();
         const result = processImage(lastImage);
