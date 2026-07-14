@@ -183,14 +183,17 @@
     // DEBUG: Edge detection 결과 표시
     showDebugBinary('debug-edge', bin, w, h);
     
+    // Morphological Closing: 갭 채우기 (dilate radius=2)
+    const closed = closingBinary(bin, w, h, 2);
+    
     // Zhang-Suen thinning 적용
-    zhangSuenThin(bin, w, h);
+    zhangSuenThin(closed, w, h);
     
     // DEBUG: Thinning 결과 표시
-    showDebugBinary('debug-thin', bin, w, h);
+    showDebugBinary('debug-thin', closed, w, h);
     
     // Skeleton에서 contour 추출
-    const contours = traceSkeletonChains(bin, w, h, 0, 0);
+    const contours = traceSkeletonChains(closed, w, h, 0, 0);
     
     // DEBUG: Skeleton chains 표시
     showDebugContours('debug-skeleton', contours, w, h);
@@ -246,6 +249,54 @@
       bin[i] = mag[i] >= threshold ? 1 : 0;
     }
     return bin;
+  }
+
+  // ═══════════════════════════════════════════════════════════════
+  //  MORPHOLOGICAL OPERATIONS (Closing: Dilate → Erode)
+  // ═══════════════════════════════════════════════════════════════
+
+  function dilateBinary(bin, w, h, radius) {
+    const result = new Uint8Array(w * h);
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        let found = false;
+        for (let dy = -radius; dy <= radius && !found; dy++) {
+          for (let dx = -radius; dx <= radius && !found; dx++) {
+            const nx = x + dx, ny = y + dy;
+            if (nx >= 0 && nx < w && ny >= 0 && ny < h && bin[ny*w+nx] === 1) {
+              found = true;
+            }
+          }
+        }
+        result[y*w+x] = found ? 1 : 0;
+      }
+    }
+    return result;
+  }
+
+  function erodeBinary(bin, w, h, radius) {
+    const result = new Uint8Array(w * h);
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        let all = true;
+        for (let dy = -radius; dy <= radius && all; dy++) {
+          for (let dx = -radius; dx <= radius && all; dx++) {
+            const nx = x + dx, ny = y + dy;
+            if (nx < 0 || nx >= w || ny < 0 || ny >= h || bin[ny*w+nx] === 0) {
+              all = false;
+            }
+          }
+        }
+        result[y*w+x] = all ? 1 : 0;
+      }
+    }
+    return result;
+  }
+
+  // Closing: Dilate → Erode (갭 채우기)
+  function closingBinary(bin, w, h, radius) {
+    const dilated = dilateBinary(bin, w, h, radius);
+    return erodeBinary(dilated, w, h, radius);
   }
 
 
