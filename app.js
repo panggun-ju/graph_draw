@@ -6,7 +6,7 @@
   const RDP_EPS_MERGE = 1.5;  // merge 켤 때 더 강한 간결화
   const BATCH_SIZE = 20;
   const LINE_COLOR = '#2d2d2d';
-  const EDGE_THRESH = 0.10;
+  const EDGE_THRESH = 0.15;
   const MIN_CONTOUR = 10;
 
   const fileInput = document.getElementById('file-input');
